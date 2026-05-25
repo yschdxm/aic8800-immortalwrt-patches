@@ -647,6 +647,17 @@ mac80211_iw_interface_add() {
 	}
 
 	[ "$rc" = 233 ] && {
+		# Try mode switch on existing interface first (avoids del/add deadlocks)
+		case "$type" in
+			"__ap") iw dev "$ifname" set type ap >/dev/null 2>&1 && rc=0 ;;
+			"managed"|"adhoc"|"mp"|"monitor")
+				iw dev "$ifname" set type "$type" >/dev/null 2>&1 && rc=0
+				[ "$type" = "mp" ] && iw dev "$ifname" set type mesh >/dev/null 2>&1 && rc=0
+				[ "$type" = "adhoc" ] && iw dev "$ifname" set type ibss >/dev/null 2>&1 && rc=0
+			;;
+		esac
+	}
+	[ "$rc" = 233 ] && {
 		iw dev "$ifname" del >/dev/null 2>&1
 		[ "$?" = 0 ] && {
 			sleep 1

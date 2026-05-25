@@ -1,0 +1,9 @@
+--- a/rwnx_main.c
++++ b/rwnx_main.c
+@@ -8735,7 +8735,8 @@
+ 	    BIT(NL80211_IFTYPE_P2P_DEVICE)  |
+ 	    #endif
+ 	    #endif
+-	    BIT(NL80211_IFTYPE_MONITOR);
++	    //BIT(NL80211_IFTYPE_MONITOR)	/* disabled: mode switch unstable */
++	    0;

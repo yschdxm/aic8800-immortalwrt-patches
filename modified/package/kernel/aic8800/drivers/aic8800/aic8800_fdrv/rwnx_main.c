@@ -8735,7 +8735,8 @@ if((g_rwnx_plat->usbdev->chipid == PRODUCT_ID_AIC8801) ||
     BIT(NL80211_IFTYPE_P2P_DEVICE)  |
     #endif
     #endif
-    BIT(NL80211_IFTYPE_MONITOR);
+    //BIT(NL80211_IFTYPE_MONITOR)	/* disabled: mode switch unstable */
+    0;
 
 #if defined CONFIG_GPIO_WAKEUP || defined CONFIG_WOWLAN
 		/* Set WoWLAN flags */

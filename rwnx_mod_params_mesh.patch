@@ -1,0 +1,7 @@
+--- a/rwnx_mod_params.c
++++ b/rwnx_mod_params.c
+@@ -50,7 +50,7 @@
+ 	    COMMON_PARAM(bfmee, true, true)
+ 	    COMMON_PARAM(bfmer, false, false)
+-	    COMMON_PARAM(mesh, true, true)
++	    COMMON_PARAM(mesh, false, false)
