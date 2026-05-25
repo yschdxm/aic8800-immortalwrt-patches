@@ -1,0 +1,67 @@
+--- original/mac80211.sh	2026-05-25 19:51:49.901713620 +0800
++++ modified/package/kernel/mac80211/files/lib/netifd/wireless/mac80211.sh	2026-05-25 19:51:49.913713615 +0800
+@@ -103,8 +103,8 @@
+ 	for capab in "$@"; do
+ 		set -- $capab
+ 
+-		[ "$(($4))" -gt 0 ] || continue
+-		[ "$(($__mask & $2))" -eq "$((${3:-$2}))" ] || continue
++		eval "test \"\$4\" -gt 0" 2>/dev/null || continue
++		eval "test \"\$((\$__mask & \$2))\" -eq \"\$((\${3:-\$2}))\"" 2>/dev/null || continue
+ 		__out="$__out[$1]"
+ 	done
+ 	IFS="$oifs"
+@@ -119,8 +119,8 @@
+ 	IFS=:
+ 	for capab in "$@"; do
+ 		set -- $capab
+-		[ "$(($4))" -gt 0 ] || continue
+-		[ "$(((0x$2) & $3))" -gt 0 ] || {
++		eval "test \"\$4\" -gt 0" 2>/dev/null || continue
++		eval "test \"\$((0x\$2 & \$3))\" -gt 0" 2>/dev/null || {
+ 			eval "$1=0"
+ 			continue
+ 		}
+@@ -205,7 +205,7 @@
+ 			dsss_cck_40:1
+ 
+ 		ht_cap_mask=0
+-		for cap in $(iw phy "$phy" info | grep 'Capabilities:' | cut -d: -f2); do
++		for cap in $(iw phy "$phy" info | grep 'Capabilities: 0x' | cut -d: -f2); do
+ 			ht_cap_mask="$(($ht_cap_mask | $cap))"
+ 		done
+ 
+@@ -414,6 +414,12 @@
+ 	esac
+ 
+ 	if [ "$enable_ax" != "0" ]; then
++		echo -e "driver=nl80211\ninterface=__he_test\nieee80211ax=1" > /tmp/.he_check.conf
++		/usr/sbin/hostapd -t /tmp/.he_check.conf 2>&1 | grep -q "unknown configuration item 'ieee80211ax'" && enable_ax=0
++		rm -f /tmp/.he_check.conf
++	fi
++
++	if [ "$enable_ax" != "0" ]; then
+ 		json_get_vars \
+ 			he_su_beamformer:1 \
+ 			he_su_beamformee:1 \
+@@ -425,9 +431,9 @@
+ 			he_bss_color:128 \
+ 			he_bss_color_enabled:1
+ 
+-		he_phy_cap=$(iw phy "$phy" info | sed -n '/HE Iftypes: AP/,$p' | awk -F "[()]" '/HE PHY Capabilities/ { print $2 }' | head -1)
++		he_phy_cap=$(iw phy "$phy" info | sed -n '/HE Iftypes:/,$p' | awk -F "[()]" '/HE PHY Capabilities/ { print $2 }' | head -1)
+ 		he_phy_cap=${he_phy_cap:2}
+-		he_mac_cap=$(iw phy "$phy" info | sed -n '/HE Iftypes: AP/,$p' | awk -F "[()]" '/HE MAC Capabilities/ { print $2 }' | head -1)
++		he_mac_cap=$(iw phy "$phy" info | sed -n '/HE Iftypes:/,$p' | awk -F "[()]" '/HE MAC Capabilities/ { print $2 }' | head -1)
+ 		he_mac_cap=${he_mac_cap:2}
+ 
+ 		append base_cfg "ieee80211ax=1" "$N"
+@@ -621,7 +627,7 @@
+ 	[ "$rc" = 233 ] && {
+ 		# Keep matching pre-existing interface
+ 		[ -d "/sys/class/ieee80211/${phy}/device/net/${ifname}" ] && \
+-		case "$(iw dev $ifname info | grep "^\ttype" | cut -d' ' -f2- 2>/dev/null)" in
++		case "$(iw dev $ifname info | sed -n 's/^[[:space:]]*type //p' 2>/dev/null)" in
+ 			"AP")
+ 				[ "$type" = "__ap" ] && rc=0
+ 				;;
