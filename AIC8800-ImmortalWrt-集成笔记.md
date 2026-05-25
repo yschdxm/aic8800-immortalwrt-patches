@@ -189,8 +189,30 @@ sinfo->filled |= (BIT(NL80211_STA_INFO_TX_BITRATE) | BIT(NL80211_STA_INFO_TX_FAI
 sinfo->signal = rx_vect1->rssi1;  // 原来: sinfo->signal = (s8)cfm.rssi;
 ```
 
+## 第十道坎：Client 模式没有 wpa_supplicant
+
+AP 模式一切正常之后，自然想试试 Client 模式——把 AIC8800 当成无线客户端去连接别的 WiFi。在 LuCI 里把模式从 Master 改成 Client，填好 SSID 保存，结果报错 `WPA_SUPPLICANT_FAILED`。到路由器上一看，`/usr/sbin/wpa_supplicant` 文件根本不存在。
+
+这里需要理解 OpenWrt 的 WiFi 认证架构：AP 模式用 hostapd，Client 模式用 wpa_supplicant，两者是不同的二进制。这个路由器原本只装了 hostapd。OpenWrt 提供了一个叫 `wpad` 的整合包，它是 hostapd 和 wpa_supplicant 的多调用合并版本，`/usr/sbin/wpa_supplicant` 和 `/usr/sbin/hostapd` 都是指向 `wpad` 的符号链接。在 `.config` 中把独立 hostapd 替换为 `CONFIG_PACKAGE_wpad-openssl=y`，编译后 Client 模式就能正常工作了。HE 支持不受影响，因为 hostapd Makefile 中 `CONFIG_IEEE80211AX` 是全局传递给所有变体的。
+
+## 第十一道坎：模式切换与 del_iface 的死锁困境
+
+Client 模式能用了，但尝试切换到 Monitor 模式时又炸了，报 `Resource busy`。原来之前为了解决 wiphy_lock 死锁问题，我们曾把驱动的 `del_virtual_intf` 回调改成了空函数（no-op），直接 `return 0` 什么都不做。这导致 `iw dev wlan0 del` 命令看着成功了，实际上接口纹丝不动。当 LuCI 切换模式时，mac80211.sh 需要先删掉旧接口再创建新类型的接口，删除是空操作，新建自然失败——设备名已被占用。
+
+我们试过在 `del_iface` 中用 `cfg80211_unregister_netdevice` 做真正的删除，但这导致了一个更深层的崩溃：接口删除后，IPv6 的 MLD 定时器仍然持有对 netdev 的引用，定时器触发时 netdev_ops 已被清空，空指针解引用，内核 panic，路由器无限重启。
+
+最终方案是保持 `del_iface` 为 no-op，但在 mac80211.sh 的 `mac80211_iw_interface_add` 函数中增加一条路径：当检测到接口已存在且类型不匹配时，先用 `iw dev <ifname> set type <新类型>` 直接切换模式，而不是走删除+重建的老路。这个命令触发驱动的 `change_virtual_intf` 回调，在接口存活的情况下改变其工作模式，完全绕开了 del/add 的死锁和崩溃问题。
+
+## 第十二道坎：Monitor 和 Mesh 模式不稳定
+
+`iw dev set type` 方案让 AP 和 Client 之间可以自由切换了，但 Monitor 模式仍然切不过去——驱动的 `change_virtual_intf` 不支持 managed→monitor 过渡。Mesh 虽然能切过去，但从 Mesh 切回 AP 时接口会消失或改名（phy0 变成了 phy1），系统不稳定。
+
+决定从源头解决问题。在驱动的 `wiphy->interface_modes` 初始化中注释掉 `BIT(NL80211_IFTYPE_MONITOR)`，并将 mesh 的模块参数默认值从 `true` 改为 `false`。这样驱动不再向内核注册 monitor 和 mesh 能力，LuCI 也就不会显示这两个选项。最终网卡只暴露两种可用模式：接入点（AP）和客户端（managed），两个都非常稳定。
+
 ## 终态
 
-所有修复完成后，AIC8800 网卡在 ImmortalWrt 上完全正常工作。radio0 被识别为 mac80211 类型，LuCI 可以像管理内置网卡一样管理它：切换信道、调整频宽、修改发射功率、更换 SSID 和加密方式，全都正常。客户端连接后，信号强度、速率都能正确显示。
+所有修复完成后，AIC8800 网卡在 ImmortalWrt 上完全正常工作。radio0 被识别为 mac80211 类型，LuCI 可以像管理内置网卡一样管理它：AP 和 Client 两种模式之间自由切换，信道、频宽、发射功率、SSID、加密方式均可正常配置。客户端连接后信号强度和速率正确显示。
 
-这个过程反复了将近十轮编译-刷机-测试，每次都在看起来"马上就好了"的地方翻出新的坑。回过头看，这些坑基本上可以归为三类：BusyBox 和 GNU 工具链的微妙差异（`\t`、`$(())`、sed 的空格处理）、OpenWrt 构建配置的遗漏（HE 支持未启用）、以及 AIC8800 驱动本身的不完善（`get_tx_power` 缺失、RSSI 取错数据源）。修完后系统运行稳定，所有 LuCI 功能正常可用。
+所有修改已开源在 GitHub：<https://github.com/yschdxm/aic8800-immortalwrt-patches>
+
+这个过程反复了十几轮编译-刷机-测试，每次都在看起来"马上就好了"的地方翻出新的坑。回过头看，这些坑基本上可以归为三类：BusyBox 和 GNU 工具链的微妙差异（`\t`、`$(())`、sed 的空格处理）、OpenWrt 构建配置的遗漏（HE 支持未启用）、以及 AIC8800 驱动本身的不完善（`get_tx_power` 缺失、RSSI 取错数据源、del_iface 死锁）。修完后系统在各种场景下都运行稳定。
